@@ -11,8 +11,13 @@
 #include "plume_vulkan.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cmath>
 #include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 #include <unordered_map>
 
 #if DLSS_ENABLED
@@ -40,6 +45,9 @@ namespace plume {
     // Command queues are created as virtual queues on top of the native queues provided by Vulkan,
     // so they're not under the limit set by the the device or the backend.
     static const uint32_t MaxQueuesPerFamilyCount = 4;
+
+    static const uint32_t VulkanVendorQualcomm = 0x5143;
+    static const uint32_t VulkanVendorArm = 0x13B5;
 
     // Required extensions.
 
@@ -92,6 +100,129 @@ namespace plume {
     };
 
     // Common functions.
+
+    static const char *vkResultName(VkResult result) {
+        switch (result) {
+        case VK_SUCCESS:
+            return "VK_SUCCESS";
+        case VK_NOT_READY:
+            return "VK_NOT_READY";
+        case VK_TIMEOUT:
+            return "VK_TIMEOUT";
+        case VK_EVENT_SET:
+            return "VK_EVENT_SET";
+        case VK_EVENT_RESET:
+            return "VK_EVENT_RESET";
+        case VK_INCOMPLETE:
+            return "VK_INCOMPLETE";
+        case VK_ERROR_OUT_OF_HOST_MEMORY:
+            return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+            return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case VK_ERROR_INITIALIZATION_FAILED:
+            return "VK_ERROR_INITIALIZATION_FAILED";
+        case VK_ERROR_DEVICE_LOST:
+            return "VK_ERROR_DEVICE_LOST";
+        case VK_ERROR_MEMORY_MAP_FAILED:
+            return "VK_ERROR_MEMORY_MAP_FAILED";
+        case VK_ERROR_LAYER_NOT_PRESENT:
+            return "VK_ERROR_LAYER_NOT_PRESENT";
+        case VK_ERROR_EXTENSION_NOT_PRESENT:
+            return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case VK_ERROR_FEATURE_NOT_PRESENT:
+            return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case VK_ERROR_INCOMPATIBLE_DRIVER:
+            return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case VK_ERROR_TOO_MANY_OBJECTS:
+            return "VK_ERROR_TOO_MANY_OBJECTS";
+        case VK_ERROR_FORMAT_NOT_SUPPORTED:
+            return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        case VK_ERROR_FRAGMENTED_POOL:
+            return "VK_ERROR_FRAGMENTED_POOL";
+        case VK_ERROR_UNKNOWN:
+            return "VK_ERROR_UNKNOWN";
+        case VK_ERROR_OUT_OF_POOL_MEMORY:
+            return "VK_ERROR_OUT_OF_POOL_MEMORY";
+        case VK_ERROR_INVALID_EXTERNAL_HANDLE:
+            return "VK_ERROR_INVALID_EXTERNAL_HANDLE";
+        case VK_ERROR_FRAGMENTATION:
+            return "VK_ERROR_FRAGMENTATION";
+        case VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS:
+            return "VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS";
+        case VK_ERROR_SURFACE_LOST_KHR:
+            return "VK_ERROR_SURFACE_LOST_KHR";
+        case VK_ERROR_NATIVE_WINDOW_IN_USE_KHR:
+            return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR";
+        case VK_SUBOPTIMAL_KHR:
+            return "VK_SUBOPTIMAL_KHR";
+        case VK_ERROR_OUT_OF_DATE_KHR:
+            return "VK_ERROR_OUT_OF_DATE_KHR";
+        case VK_ERROR_INCOMPATIBLE_DISPLAY_KHR:
+            return "VK_ERROR_INCOMPATIBLE_DISPLAY_KHR";
+        case VK_ERROR_VALIDATION_FAILED_EXT:
+            return "VK_ERROR_VALIDATION_FAILED_EXT";
+        default:
+            return "VK_RESULT_UNKNOWN";
+        }
+    }
+
+    static const char *vkDeviceTypeName(VkPhysicalDeviceType type) {
+        switch (type) {
+        case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+            return "OTHER";
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+            return "INTEGRATED_GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+            return "DISCRETE_GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+            return "VIRTUAL_GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+            return "CPU";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    static bool vulkanDeviceNameContains(const VkPhysicalDeviceProperties &properties, const char *needle) {
+        return std::string(properties.deviceName).find(needle) != std::string::npos;
+    }
+
+    static std::string VulkanDeviceDiagnostics;
+
+    static void appendVulkanDeviceDiagnostic(const char *format, ...) {
+        char message[2048];
+
+        va_list args;
+        va_start(args, format);
+        vsnprintf(message, sizeof(message), format, args);
+        va_end(args);
+
+        fprintf(stderr, "%s", message);
+        VulkanDeviceDiagnostics += message;
+    }
+
+    static void writeVulkanDeviceDiagnosticFile(const char *reason) {
+        const char *appFolderPath = std::getenv("APP_FOLDER_PATH");
+        if ((appFolderPath == nullptr) || (appFolderPath[0] == '\0')) {
+            return;
+        }
+
+        const std::string outputPath = std::string(appFolderPath) + "/vulkan_device_error.txt";
+        FILE *file = fopen(outputPath.c_str(), "w");
+        if (file == nullptr) {
+            fprintf(stderr, "Failed to write Vulkan device diagnostic file: %s.\n", outputPath.c_str());
+            return;
+        }
+
+        fprintf(file, "Zelda64 Recompiled Android Vulkan device error\n\n");
+        fprintf(file, "Reason: %s\n\n", reason);
+        fprintf(file, "%s", VulkanDeviceDiagnostics.c_str());
+        fclose(file);
+    }
+
+    static void logVulkanApiVersion(const char *prefix, uint32_t version) {
+        appendVulkanDeviceDiagnostic("%s%u.%u.%u\n", prefix, VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version));
+    }
 
     static uint32_t roundUp(uint32_t value, uint32_t powerOf2Alignment) {
         return (value + powerOf2Alignment - 1) & ~(powerOf2Alignment - 1);
@@ -3732,11 +3863,13 @@ namespace plume {
         assert(renderInterface != nullptr);
 
         this->renderInterface = renderInterface;
+        VulkanDeviceDiagnostics.clear();
 
         uint32_t deviceCount = 0;
         vkEnumeratePhysicalDevices(renderInterface->instance, &deviceCount, nullptr);
         if (deviceCount == 0) {
-            fprintf(stderr, "Unable to find devices that support Vulkan.\n");
+            appendVulkanDeviceDiagnostic("Unable to find devices that support Vulkan.\n");
+            writeVulkanDeviceDiagnosticFile("No Vulkan physical devices were reported by the driver.");
             return;
         }
         
@@ -3755,6 +3888,14 @@ namespace plume {
         for (uint32_t i = 0; i < deviceCount; i++) {
             VkPhysicalDeviceProperties deviceProperties;
             vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+            appendVulkanDeviceDiagnostic("Vulkan physical device %u: \"%s\", vendor=0x%X, device=0x%X, type=%s, driver=0x%X.\n",
+                i,
+                deviceProperties.deviceName,
+                deviceProperties.vendorID,
+                deviceProperties.deviceID,
+                vkDeviceTypeName(deviceProperties.deviceType),
+                deviceProperties.driverVersion);
+            logVulkanApiVersion("Vulkan physical device API version: ", deviceProperties.apiVersion);
 
             uint32_t deviceTypeIndex = deviceProperties.deviceType;
             if (deviceTypeIndex > 4) {
@@ -3781,9 +3922,30 @@ namespace plume {
         }
 
         if (physicalDevice == VK_NULL_HANDLE) {
-            fprintf(stderr, "Unable to find a device with the required features.\n");
+            appendVulkanDeviceDiagnostic("Unable to find a device with the required features.\n");
+            writeVulkanDeviceDiagnosticFile("No physical device survived Plume device selection.");
             return;
         }
+
+        // Store properties.
+        vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
+
+#   ifdef __ANDROID__
+        const bool androidAdrenoDevice = (physicalDeviceProperties.vendorID == VulkanVendorQualcomm) || vulkanDeviceNameContains(physicalDeviceProperties, "Adreno");
+        const bool androidMaliDevice = (physicalDeviceProperties.vendorID == VulkanVendorArm) || vulkanDeviceNameContains(physicalDeviceProperties, "Mali");
+        const bool androidConservativeVulkan = !androidAdrenoDevice;
+        if (androidAdrenoDevice) {
+            appendVulkanDeviceDiagnostic("Android Vulkan profile: Adreno/default.\n");
+        }
+        else if (androidMaliDevice) {
+            appendVulkanDeviceDiagnostic("Android Vulkan profile: Mali/conservative optional features.\n");
+        }
+        else {
+            appendVulkanDeviceDiagnostic("Android Vulkan profile: non-Adreno/conservative optional features.\n");
+        }
+#   else
+        const bool androidConservativeVulkan = false;
+#   endif
 
         // Check for extensions.
         uint32_t extensionCount;
@@ -3793,6 +3955,7 @@ namespace plume {
         vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, availableExtensions.data());
 
         std::unordered_set<std::string> missingRequiredExtensions = RequiredDeviceExtensions;
+        std::unordered_set<std::string> supportedRequiredExtensions;
         std::unordered_set<std::string> supportedOptionalExtensions;
 #   if DLSS_ENABLED
         const std::unordered_set<std::string> dlssExtensions = DLSS::getRequiredDeviceExtensionsVulkan(this);
@@ -3801,7 +3964,10 @@ namespace plume {
             const std::string extensionName(availableExtensions[i].extensionName);
             missingRequiredExtensions.erase(extensionName);
 
-            if (OptionalDeviceExtensions.find(extensionName) != OptionalDeviceExtensions.end()) {
+            if (RequiredDeviceExtensions.find(extensionName) != RequiredDeviceExtensions.end()) {
+                supportedRequiredExtensions.insert(extensionName);
+            }
+            else if (OptionalDeviceExtensions.find(extensionName) != OptionalDeviceExtensions.end()) {
                 supportedOptionalExtensions.insert(extensionName);
             }
 #       if DLSS_ENABLED
@@ -3810,18 +3976,28 @@ namespace plume {
             }
 #       endif
         }
+
+        const bool vulkan12Core = (VK_VERSION_MAJOR(physicalDeviceProperties.apiVersion) > 1) || ((VK_VERSION_MAJOR(physicalDeviceProperties.apiVersion) == 1) && (VK_VERSION_MINOR(physicalDeviceProperties.apiVersion) >= 2));
+        if (vulkan12Core) {
+            const bool descriptorIndexingCore = missingRequiredExtensions.erase(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) > 0;
+            const bool scalarBlockLayoutCore = missingRequiredExtensions.erase(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME) > 0;
+            if (descriptorIndexingCore) {
+                appendVulkanDeviceDiagnostic("Required extension %s is not advertised; accepting Vulkan 1.2 core descriptor indexing path.\n", VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+            }
+            if (scalarBlockLayoutCore) {
+                appendVulkanDeviceDiagnostic("Required extension %s is not advertised; accepting Vulkan 1.2 core scalar block layout path.\n", VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
+            }
+        }
         
         if (!missingRequiredExtensions.empty()) {
             for (const std::string &extension : missingRequiredExtensions) {
-                fprintf(stderr, "Missing required extension: %s.\n", extension.c_str());
+                appendVulkanDeviceDiagnostic("Missing required extension: %s.\n", extension.c_str());
             }
 
-            fprintf(stderr, "Unable to create device. Required extensions are missing.\n");
+            appendVulkanDeviceDiagnostic("Unable to create device. Required extensions are missing.\n");
+            writeVulkanDeviceDiagnosticFile("Required Vulkan device extensions are missing.");
             return;
         }
-
-        // Store properties.
-        vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 
         // Check for supported features.
         void *featuresChain = nullptr;
@@ -3894,6 +4070,11 @@ namespace plume {
         deviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         deviceFeatures.pNext = featuresChain;
         vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
+        appendVulkanDeviceDiagnostic("Vulkan selected device: \"%s\".\n", physicalDeviceProperties.deviceName);
+        appendVulkanDeviceDiagnostic("Vulkan feature scalarBlockLayout=%u.\n", layoutFeatures.scalarBlockLayout);
+        appendVulkanDeviceDiagnostic("Vulkan feature descriptorBindingPartiallyBound=%u.\n", indexingFeatures.descriptorBindingPartiallyBound);
+        appendVulkanDeviceDiagnostic("Vulkan feature descriptorBindingVariableDescriptorCount=%u.\n", indexingFeatures.descriptorBindingVariableDescriptorCount);
+        appendVulkanDeviceDiagnostic("Vulkan feature runtimeDescriptorArray=%u.\n", indexingFeatures.runtimeDescriptorArray);
 
         // Check for properties.
         if (rayTracingFound) {
@@ -3905,7 +4086,7 @@ namespace plume {
             vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties2);
         }
 
-        const bool sampleLocationsFound = supportedOptionalExtensions.find(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool sampleLocationsFound = !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) != supportedOptionalExtensions.end());
         if (sampleLocationsFound) {
             sampleLocationProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLE_LOCATIONS_PROPERTIES_EXT;
 
@@ -3938,7 +4119,7 @@ namespace plume {
             createDeviceChain = &layoutFeatures;
         }
 
-        const bool presentWaitSupported = presentIdFeatures.presentId && presentWaitFeatures.presentWait;
+        const bool presentWaitSupported = !androidConservativeVulkan && presentIdFeatures.presentId && presentWaitFeatures.presentWait;
         if (presentWaitSupported) {
             presentIdFeatures.pNext = createDeviceChain;
             createDeviceChain = &presentIdFeatures;
@@ -3972,16 +4153,33 @@ namespace plume {
         std::vector<bool> queueFamilyUsed(queueFamilyCount, false);
         vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilyProperties.data());
 
+        appendVulkanDeviceDiagnostic("Vulkan queue family count: %u.\n", queueFamilyCount);
+        for (uint32_t i = 0; i < queueFamilyCount; i++) {
+            appendVulkanDeviceDiagnostic("Vulkan queue family %u: flags=0x%X, count=%u.\n", i, queueFamilyProperties[i].queueFlags, queueFamilyProperties[i].queueCount);
+        }
+
+        auto queueFamilySupportsFlags = [](VkQueueFlags queueFlags, VkQueueFlags requiredFlags) {
+            VkQueueFlags effectiveQueueFlags = queueFlags;
+            if ((effectiveQueueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) != 0) {
+                effectiveQueueFlags |= VK_QUEUE_TRANSFER_BIT;
+            }
+
+            return (effectiveQueueFlags & requiredFlags) == requiredFlags;
+        };
+
         auto pickFamilyQueue = [&](RenderCommandListType type, VkQueueFlags flags) {
             uint32_t familyIndex = 0;
             uint32_t familySetBits = sizeof(uint32_t) * 8;
             uint32_t familyQueueCount = 0;
             bool familyUsed = false;
+            bool foundFamily = false;
             for (uint32_t i = 0; i < queueFamilyCount; i++) {
                 const VkQueueFamilyProperties &props = queueFamilyProperties[i];
 
                 // The family queue flags must contain all the flags required by the command list type.
-                if ((props.queueFlags & flags) != flags) {
+                // Vulkan guarantees transfer support for graphics and compute queues even if the transfer
+                // bit is not explicitly reported, which is common on some Android drivers.
+                if (!queueFamilySupportsFlags(props.queueFlags, flags)) {
                     continue;
                 }
 
@@ -3994,17 +4192,28 @@ namespace plume {
                     familySetBits = setBits;
                     familyQueueCount = props.queueCount;
                     familyUsed = used;
+                    foundFamily = true;
                 }
+            }
+
+            if (!foundFamily) {
+                appendVulkanDeviceDiagnostic("Unable to find Vulkan queue family for command list type %u with flags 0x%X.\n", uint32_t(type), flags);
+                return false;
             }
 
             queueFamilyIndices[toFamilyIndex(type)] = familyIndex;
             queueFamilyUsed[familyIndex] = true;
+            return true;
         };
 
         // Pick the family queues for each type of command list.
-        pickFamilyQueue(RenderCommandListType::DIRECT, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
-        pickFamilyQueue(RenderCommandListType::COMPUTE, VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
-        pickFamilyQueue(RenderCommandListType::COPY, VK_QUEUE_TRANSFER_BIT);
+        const bool foundDirectQueue = pickFamilyQueue(RenderCommandListType::DIRECT, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
+        const bool foundComputeQueue = pickFamilyQueue(RenderCommandListType::COMPUTE, VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
+        const bool foundCopyQueue = pickFamilyQueue(RenderCommandListType::COPY, VK_QUEUE_TRANSFER_BIT);
+        if (!foundDirectQueue || !foundComputeQueue || !foundCopyQueue) {
+            writeVulkanDeviceDiagnosticFile("Required Vulkan queue families are missing.");
+            return;
+        }
 
         // Create the struct to store the virtual queues.
         queueFamilies.resize(queueFamilyCount);
@@ -4026,7 +4235,7 @@ namespace plume {
         }
 
         std::vector<const char *> enabledExtensions;
-        for (const std::string &extension : RequiredDeviceExtensions) {
+        for (const std::string &extension : supportedRequiredExtensions) {
             enabledExtensions.push_back(extension.c_str());
         }
 
@@ -4045,7 +4254,8 @@ namespace plume {
 
         VkResult res = vkCreateDevice(physicalDevice, &createInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateDevice failed with error code 0x%X.\n", res);
+            appendVulkanDeviceDiagnostic("vkCreateDevice failed with error code 0x%X (%s).\n", res, vkResultName(res));
+            writeVulkanDeviceDiagnosticFile("vkCreateDevice failed.");
             return;
         }
 
@@ -4086,7 +4296,8 @@ namespace plume {
 
         res = vmaCreateAllocator(&allocatorInfo, &allocator);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vmaCreateAllocator failed with error code 0x%X.\n", res);
+            appendVulkanDeviceDiagnostic("vmaCreateAllocator failed with error code 0x%X (%s).\n", res, vkResultName(res));
+            writeVulkanDeviceDiagnosticFile("Vulkan memory allocator creation failed.");
             release();
             return;
         }
@@ -4125,7 +4336,7 @@ namespace plume {
         capabilities.bufferDeviceAddress = bufferDeviceAddressSupported;
         capabilities.samplerMirrorClampToEdge = supportedOptionalExtensions.find(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) != supportedOptionalExtensions.end();
         capabilities.presentWait = presentWaitSupported;
-        capabilities.displayTiming = supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        capabilities.displayTiming = !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end());
         capabilities.maxTextureSize = physicalDeviceProperties.limits.maxImageDimension2D;
         capabilities.preferHDR = memoryHeapSize > (512 * 1024 * 1024);
         capabilities.dynamicDepthBias = true;
@@ -4143,7 +4354,7 @@ namespace plume {
 #   endif
 
         // Fill Vulkan-only capabilities.
-        loadStoreOpNoneSupported = supportedOptionalExtensions.find(VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        loadStoreOpNoneSupported = !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME) != supportedOptionalExtensions.end());
 
         if (!nullDescriptorSupported) {
             nullBuffer = createBuffer(RenderBufferDesc::DefaultBuffer(16, RenderBufferFlag::VERTEX));
