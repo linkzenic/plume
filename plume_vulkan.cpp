@@ -2325,14 +2325,51 @@ namespace plume {
         immediatePresentModeSupported = std::find(presentModes.begin(), presentModes.end(), VK_PRESENT_MODE_IMMEDIATE_KHR) != presentModes.end();
         mailboxPresentModeSupported = std::find(presentModes.begin(), presentModes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != presentModes.end();
 
+        for (uint32_t i = 0; i < surfaceFormatCount; i++) {
+            fprintf(stderr, "Vulkan surface format %u: format=%u colorSpace=%u.\n",
+                i,
+                uint32_t(surfaceFormats[i].format),
+                uint32_t(surfaceFormats[i].colorSpace));
+        }
+
         // Check if the format we requested is part of the supported surface formats.
         std::vector<VkSurfaceFormatKHR> compatibleSurfaceFormats;
         VkFormat requestedFormat = toVk(desc.format);
         for (uint32_t i = 0; i < surfaceFormatCount; i++) {
             if (surfaceFormats[i].format == requestedFormat) {
                 compatibleSurfaceFormats.emplace_back(surfaceFormats[i]);
-                break;
             }
+        }
+
+        if (compatibleSurfaceFormats.empty()) {
+            const VkFormat androidFallbackFormats[] = {
+                VK_FORMAT_B8G8R8A8_UNORM,
+                VK_FORMAT_R8G8B8A8_UNORM,
+                VK_FORMAT_B8G8R8A8_SRGB,
+                VK_FORMAT_R8G8B8A8_SRGB,
+            };
+
+            for (VkFormat fallbackFormat : androidFallbackFormats) {
+                for (uint32_t i = 0; i < surfaceFormatCount; i++) {
+                    if (surfaceFormats[i].format == fallbackFormat) {
+                        compatibleSurfaceFormats.emplace_back(surfaceFormats[i]);
+                    }
+                }
+
+                if (!compatibleSurfaceFormats.empty()) {
+                    fprintf(stderr, "Using Vulkan fallback surface format %u instead of requested format %u.\n",
+                        uint32_t(fallbackFormat),
+                        uint32_t(requestedFormat));
+                    break;
+                }
+            }
+        }
+
+        if (compatibleSurfaceFormats.empty() && !surfaceFormats.empty()) {
+            compatibleSurfaceFormats.emplace_back(surfaceFormats[0]);
+            fprintf(stderr, "Using first available Vulkan surface format %u instead of requested format %u.\n",
+                uint32_t(surfaceFormats[0].format),
+                uint32_t(requestedFormat));
         }
 
         if (compatibleSurfaceFormats.empty()) {
