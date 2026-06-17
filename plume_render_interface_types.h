@@ -37,10 +37,10 @@ namespace plume {
 #if defined(_WIN64)
     // Native HWND handle to the target window.
     typedef HWND RenderWindow;
-#elif defined(__ANDROID__)
-    typedef ANativeWindow* RenderWindow;
 #elif defined(PLUME_SDL_VULKAN_ENABLED)
     typedef SDL_Window *RenderWindow;
+#elif defined(__ANDROID__)
+    typedef ANativeWindow* RenderWindow;
 #elif defined(__linux__)
     struct RenderWindow {
         Display* display;
