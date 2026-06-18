@@ -2550,11 +2550,6 @@ namespace plume {
             preTransform = surfaceCapabilities.currentTransform;
         }
 
-        if ((surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0) {
-            fprintf(stderr, "Vulkan surface does not support color attachment usage.\n");
-            return false;
-        }
-
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         createInfo.surface = surface;
         createInfo.minImageCount = desc.textureCount;
