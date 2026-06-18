@@ -2346,23 +2346,10 @@ namespace plume {
         VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities);
 
-        // Pick an alpha compositing mode
-        if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) {
-            pickedAlphaFlag = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        }
-        else if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) {
-            pickedAlphaFlag = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-        }
-        else {
-            fprintf(stderr, "No known supported alpha compositing mode\n");
-            return;
-        }
-
-        // Make sure maxImageCount is never below minImageCount, as it's allowed to be zero.
-        surfaceCapabilities.maxImageCount = std::max(surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
-
-        // Clamp the requested buffer count between the bounds of the surface capabilities.
-        this->desc.textureCount = std::clamp(desc.textureCount, surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
+        const uint32_t maxImageCount = surfaceCapabilities.maxImageCount != 0
+            ? surfaceCapabilities.maxImageCount
+            : std::max(desc.textureCount, surfaceCapabilities.minImageCount);
+        this->desc.textureCount = std::clamp(desc.textureCount, surfaceCapabilities.minImageCount, maxImageCount);
 
         uint32_t surfaceFormatCount = 0;
         vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr);
@@ -2545,6 +2532,29 @@ namespace plume {
         VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(commandQueue->device->physicalDevice, surface, &surfaceCapabilities);
 
+        if (surfaceCapabilities.currentExtent.width != UINT32_MAX) {
+            width = surfaceCapabilities.currentExtent.width;
+            height = surfaceCapabilities.currentExtent.height;
+        }
+        else {
+            width = std::clamp(width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
+            height = std::clamp(height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
+        }
+
+        VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        const VkImageUsageFlags optionalImageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageUsage |= optionalImageUsage & surfaceCapabilities.supportedUsageFlags;
+
+        VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        if ((surfaceCapabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) == 0) {
+            preTransform = surfaceCapabilities.currentTransform;
+        }
+
+        if ((surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0) {
+            fprintf(stderr, "Vulkan surface does not support color attachment usage.\n");
+            return false;
+        }
+
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         createInfo.surface = surface;
         createInfo.minImageCount = desc.textureCount;
@@ -2553,9 +2563,9 @@ namespace plume {
         createInfo.imageExtent.width = width;
         createInfo.imageExtent.height = height;
         createInfo.imageArrayLayers = 1;
-        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        createInfo.imageUsage = imageUsage;
         createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        createInfo.preTransform = preTransform;
         createInfo.compositeAlpha = pickedAlphaFlag;
         createInfo.presentMode = requiredPresentMode;
         createInfo.clipped = VK_TRUE;
@@ -2563,7 +2573,23 @@ namespace plume {
 
         VkResult res = vkCreateSwapchainKHR(commandQueue->device->vk, &createInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateSwapchainKHR failed with error code 0x%X.\n", res);
+            fprintf(stderr,
+                "vkCreateSwapchainKHR failed with error code 0x%X (%s). "
+                "extent=%ux%u minImages=%u format=%u colorSpace=%u usage=0x%X preTransform=0x%X compositeAlpha=0x%X presentMode=%u supportedUsage=0x%X supportedTransforms=0x%X currentTransform=0x%X.\n",
+                res,
+                vkResultName(res),
+                createInfo.imageExtent.width,
+                createInfo.imageExtent.height,
+                createInfo.minImageCount,
+                uint32_t(createInfo.imageFormat),
+                uint32_t(createInfo.imageColorSpace),
+                uint32_t(createInfo.imageUsage),
+                uint32_t(createInfo.preTransform),
+                uint32_t(createInfo.compositeAlpha),
+                uint32_t(createInfo.presentMode),
+                uint32_t(surfaceCapabilities.supportedUsageFlags),
+                uint32_t(surfaceCapabilities.supportedTransforms),
+                uint32_t(surfaceCapabilities.currentTransform));
             return false;
         }
 
