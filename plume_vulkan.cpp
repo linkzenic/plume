@@ -2541,6 +2541,10 @@ namespace plume {
             height = std::clamp(height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
         }
 
+        if ((width == 0) || (height == 0)) {
+            return false;
+        }
+
         VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         const VkImageUsageFlags optionalImageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageUsage |= optionalImageUsage & surfaceCapabilities.supportedUsageFlags;
