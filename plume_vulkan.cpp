@@ -4137,6 +4137,7 @@ namespace plume {
         const bool androidAdrenoDevice = (physicalDeviceProperties.vendorID == VulkanVendorQualcomm) || vulkanDeviceNameContains(physicalDeviceProperties, "Adreno");
         const bool androidMaliDevice = (physicalDeviceProperties.vendorID == VulkanVendorArm) || vulkanDeviceNameContains(physicalDeviceProperties, "Mali");
         const bool androidConservativeVulkan = !androidAdrenoDevice;
+        const bool androidDisplayTimingSupported = false;
         if (androidAdrenoDevice) {
             appendVulkanDeviceDiagnostic("Android Vulkan profile: Adreno/default.\n");
         }
@@ -4146,8 +4147,10 @@ namespace plume {
         else {
             appendVulkanDeviceDiagnostic("Android Vulkan profile: non-Adreno/conservative optional features.\n");
         }
+        appendVulkanDeviceDiagnostic("Android Vulkan display timing disabled.\n");
 #   else
         const bool androidConservativeVulkan = false;
+        const bool androidDisplayTimingSupported = true;
 #   endif
 
         // Check for extensions.
@@ -4539,7 +4542,7 @@ namespace plume {
         capabilities.bufferDeviceAddress = bufferDeviceAddressSupported;
         capabilities.samplerMirrorClampToEdge = supportedOptionalExtensions.find(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) != supportedOptionalExtensions.end();
         capabilities.presentWait = presentWaitSupported;
-        capabilities.displayTiming = !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end());
+        capabilities.displayTiming = androidDisplayTimingSupported && !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end());
         capabilities.maxTextureSize = physicalDeviceProperties.limits.maxImageDimension2D;
         capabilities.preferHDR = memoryHeapSize > (512 * 1024 * 1024);
         capabilities.dynamicDepthBias = true;
