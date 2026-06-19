@@ -11,6 +11,7 @@
 #include "plume_vulkan.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <cmath>
 #include <climits>
@@ -39,7 +40,29 @@
 // TODO:
 // - Fix resource pools.
 
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+namespace {
+    std::atomic_bool androidSurfaceReady{false};
+
+    bool isAndroidSurfaceReady() {
+        return androidSurfaceReady.load(std::memory_order_acquire);
+    }
+}
+
+extern "C" void plume_set_android_surface_ready(int ready) {
+    androidSurfaceReady.store(ready != 0, std::memory_order_release);
+    fprintf(stderr, "Android Vulkan surface ready=%d.\n", ready != 0 ? 1 : 0);
+}
+#else
+namespace {
+    constexpr bool isAndroidSurfaceReady() {
+        return true;
+    }
+}
+#endif
+
 namespace plume {
+
     // Backend constants.
 
     // Required buffer alignment for acceleration structures.
@@ -2462,6 +2485,12 @@ namespace plume {
     }
 
     bool VulkanSwapChain::present(uint32_t textureIndex, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount) {
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        if (!isAndroidSurfaceReady() || (vk == VK_NULL_HANDLE)) {
+            return false;
+        }
+#endif
+
         thread_local std::vector<VkSemaphore> waitSemaphoresVector;
         waitSemaphoresVector.clear();
         for (uint32_t i = 0; i < waitSemaphoreCount; i++) {
@@ -2518,10 +2547,23 @@ namespace plume {
     }
 
     bool VulkanSwapChain::resize() {
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        if (!isAndroidSurfaceReady()) {
+            releaseImageViews();
+            releaseSwapChain();
+            width = 0;
+            height = 0;
+            fprintf(stderr, "Skipping Vulkan swapchain resize because Android surface is not ready.\n");
+            return false;
+        }
+#endif
+
         getWindowSize(width, height);
 
         // Don't recreate the swap chain at all if the window doesn't have a valid size.
         if ((width == 0) || (height == 0)) {
+            releaseImageViews();
+            releaseSwapChain();
             return false;
         }
 
@@ -2542,6 +2584,34 @@ namespace plume {
         }
 
         if ((width == 0) || (height == 0)) {
+            releaseImageViews();
+            releaseSwapChain();
+            fprintf(stderr,
+                "Skipping Vulkan swapchain resize because surface extent is zero. "
+                "currentExtent=%ux%u minExtent=%ux%u maxExtent=%ux%u supportedUsage=0x%X supportedTransforms=0x%X currentTransform=0x%X.\n",
+                surfaceCapabilities.currentExtent.width,
+                surfaceCapabilities.currentExtent.height,
+                surfaceCapabilities.minImageExtent.width,
+                surfaceCapabilities.minImageExtent.height,
+                surfaceCapabilities.maxImageExtent.width,
+                surfaceCapabilities.maxImageExtent.height,
+                uint32_t(surfaceCapabilities.supportedUsageFlags),
+                uint32_t(surfaceCapabilities.supportedTransforms),
+                uint32_t(surfaceCapabilities.currentTransform));
+            return false;
+        }
+
+        if ((surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0) {
+            releaseImageViews();
+            releaseSwapChain();
+            fprintf(stderr,
+                "Skipping Vulkan swapchain resize because surface does not support color attachment usage. "
+                "extent=%ux%u supportedUsage=0x%X supportedTransforms=0x%X currentTransform=0x%X.\n",
+                width,
+                height,
+                uint32_t(surfaceCapabilities.supportedUsageFlags),
+                uint32_t(surfaceCapabilities.supportedTransforms),
+                uint32_t(surfaceCapabilities.currentTransform));
             return false;
         }
 
@@ -2641,6 +2711,12 @@ namespace plume {
     }
 
     bool VulkanSwapChain::needsResize() const {
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        if (!isAndroidSurfaceReady()) {
+            return true;
+        }
+#endif
+
         uint32_t windowWidth, windowHeight;
         getWindowSize(windowWidth, windowHeight);
         return (vk == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode);
@@ -2683,6 +2759,12 @@ namespace plume {
     }
 
     bool VulkanSwapChain::isEmpty() const {
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        if (!isAndroidSurfaceReady()) {
+            return true;
+        }
+#endif
+
         return (vk == VK_NULL_HANDLE) || (width == 0) || (height == 0);
     }
 
@@ -2724,6 +2806,12 @@ namespace plume {
 
     bool VulkanSwapChain::acquireTexture(RenderCommandSemaphore *signalSemaphore, uint32_t *textureIndex) {
         assert(signalSemaphore != nullptr);
+
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        if (!isAndroidSurfaceReady() || (vk == VK_NULL_HANDLE)) {
+            return false;
+        }
+#endif
 
         VulkanCommandSemaphore *interfaceSemaphore = static_cast<VulkanCommandSemaphore *>(signalSemaphore);
         VkResult res = vkAcquireNextImageKHR(commandQueue->device->vk, vk, UINT64_MAX, interfaceSemaphore->vk, VK_NULL_HANDLE, textureIndex);
