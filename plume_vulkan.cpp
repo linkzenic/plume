@@ -43,20 +43,35 @@
 #if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
 namespace {
     std::atomic_bool androidSurfaceReady{false};
+    std::atomic<uint64_t> androidSurfaceGeneration{0};
 
     bool isAndroidSurfaceReady() {
         return androidSurfaceReady.load(std::memory_order_acquire);
     }
+
+    uint64_t getAndroidSurfaceGeneration() {
+        return androidSurfaceGeneration.load(std::memory_order_acquire);
+    }
 }
 
 extern "C" void plume_set_android_surface_ready(int ready) {
-    androidSurfaceReady.store(ready != 0, std::memory_order_release);
-    fprintf(stderr, "Android Vulkan surface ready=%d.\n", ready != 0 ? 1 : 0);
+    const bool newReady = ready != 0;
+    const bool oldReady = androidSurfaceReady.exchange(newReady, std::memory_order_acq_rel);
+    if (newReady && !oldReady) {
+        androidSurfaceGeneration.fetch_add(1, std::memory_order_acq_rel);
+    }
+    fprintf(stderr, "Android Vulkan surface ready=%d generation=%llu.\n",
+        newReady ? 1 : 0,
+        static_cast<unsigned long long>(getAndroidSurfaceGeneration()));
 }
 #else
 namespace {
     constexpr bool isAndroidSurfaceReady() {
         return true;
+    }
+
+    constexpr uint64_t getAndroidSurfaceGeneration() {
+        return 0;
     }
 }
 #endif
@@ -2309,6 +2324,9 @@ namespace plume {
             fprintf(stderr, "SDL_Vulkan_CreateSurface failed with error %s.\n", SDL_GetError());
             return;
         }
+#       if defined(__ANDROID__)
+        androidSurfaceGeneration = getAndroidSurfaceGeneration();
+#       endif
 #   elif defined(__ANDROID__)
         assert(desc.renderWindow != nullptr);
         VkAndroidSurfaceCreateInfoKHR surfaceCreateInfo = {};
@@ -2554,6 +2572,14 @@ namespace plume {
             width = 0;
             height = 0;
             fprintf(stderr, "Skipping Vulkan swapchain resize because Android surface is not ready.\n");
+            return false;
+        }
+
+        if (!recreateAndroidSurfaceIfNeeded()) {
+            releaseImageViews();
+            releaseSwapChain();
+            width = 0;
+            height = 0;
             return false;
         }
 #endif
@@ -2821,6 +2847,35 @@ namespace plume {
 
         return true;
     }
+
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+    bool VulkanSwapChain::recreateAndroidSurfaceIfNeeded() {
+        const uint64_t currentGeneration = getAndroidSurfaceGeneration();
+        if ((surface != VK_NULL_HANDLE) && (androidSurfaceGeneration == currentGeneration)) {
+            return true;
+        }
+
+        releaseImageViews();
+        releaseSwapChain();
+
+        VulkanInterface *renderInterface = commandQueue->device->renderInterface;
+        if (surface != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(renderInterface->instance, surface, nullptr);
+            surface = VK_NULL_HANDLE;
+        }
+
+        SDL_bool sdlRes = SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, &surface);
+        if (sdlRes == SDL_FALSE) {
+            fprintf(stderr, "SDL_Vulkan_CreateSurface failed during Android surface recreation with error %s.\n", SDL_GetError());
+            return false;
+        }
+
+        androidSurfaceGeneration = currentGeneration;
+        fprintf(stderr, "Recreated Android Vulkan surface for generation=%llu.\n",
+            static_cast<unsigned long long>(androidSurfaceGeneration));
+        return true;
+    }
+#endif
 
     void VulkanSwapChain::releaseSwapChain() {
         if (vk != VK_NULL_HANDLE) {

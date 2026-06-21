@@ -226,6 +226,9 @@ namespace plume {
         VkSwapchainKHR vk = VK_NULL_HANDLE;
         VulkanCommandQueue *commandQueue = nullptr;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        uint64_t androidSurfaceGeneration = 0;
+#endif
 #if defined(__APPLE__)
         std::unique_ptr<CocoaWindow> windowWrapper;
 #endif
@@ -259,6 +262,9 @@ namespace plume {
         bool isEmpty() const override;
         uint32_t getRefreshRate() const override;
         void getWindowSize(uint32_t &dstWidth, uint32_t &dstHeight) const;
+#if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
+        bool recreateAndroidSurfaceIfNeeded();
+#endif
         void releaseSwapChain();
         void releaseImageViews();
     };
