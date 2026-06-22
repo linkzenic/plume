@@ -1607,14 +1607,23 @@ namespace plume {
         stageInfo.pSpecializationInfo = (specInfo.mapEntryCount > 0) ? &specInfo : nullptr;
 
         const VulkanPipelineLayout *pipelineLayout = static_cast<const VulkanPipelineLayout *>(desc.pipelineLayout);
+        this->pipelineLayout = pipelineLayout->vk;
+
         VkComputePipelineCreateInfo pipelineInfo = {};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        pipelineInfo.layout = pipelineLayout->vk;
+        pipelineInfo.layout = this->pipelineLayout;
         pipelineInfo.stage = stageInfo;
 
         VkResult res = vkCreateComputePipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateComputePipelines failed with error code 0x%X.\n", res);
+            fprintf(stderr,
+                "vkCreateComputePipelines failed with error code 0x%X entry=%s workgroups=%ux%ux%u specConstants=%u.\n",
+                res,
+                stageInfo.pName != nullptr ? stageInfo.pName : "<null>",
+                desc.threadGroupSizeX,
+                desc.threadGroupSizeY,
+                desc.threadGroupSizeZ,
+                desc.specConstantsCount);
             return;
         }
     }
@@ -1626,6 +1635,10 @@ namespace plume {
     }
 
     void VulkanComputePipeline::setName(const std::string &name) {
+        if (vk == VK_NULL_HANDLE) {
+            return;
+        }
+
         setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
     }
 
@@ -1873,7 +1886,13 @@ namespace plume {
 
         VkResult res = vkCreateGraphicsPipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateGraphicsPipelines failed with error code 0x%X.\n", res);
+            fprintf(stderr,
+                "vkCreateGraphicsPipelines failed with error code 0x%X stages=%u renderTargets=%u depth=%d sampleCount=0x%X.\n",
+                res,
+                pipelineInfo.stageCount,
+                desc.renderTargetCount,
+                desc.depthTargetFormat != RenderFormat::UNKNOWN,
+                uint32_t(desc.multisampling.sampleCount));
             return;
         }
     }
@@ -1889,6 +1908,10 @@ namespace plume {
     }
 
     void VulkanGraphicsPipeline::setName(const std::string &name) {
+        if (vk == VK_NULL_HANDLE) {
+            return;
+        }
+
         setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
     }
 
@@ -2079,7 +2102,12 @@ namespace plume {
 
         VkResult res = vkCreateRayTracingPipelinesKHR(device->vk, nullptr, nullptr, 1, &pipelineInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateRayTracingPipelinesKHR failed with error code 0x%X.\n", res);
+            fprintf(stderr,
+                "vkCreateRayTracingPipelinesKHR failed with error code 0x%X stages=%u groups=%u recursion=%u.\n",
+                res,
+                pipelineInfo.stageCount,
+                pipelineInfo.groupCount,
+                pipelineInfo.maxPipelineRayRecursionDepth);
             return;
         }
 
@@ -2093,6 +2121,10 @@ namespace plume {
     }
 
     void VulkanRaytracingPipeline::setName(const std::string &name) {
+        if (vk == VK_NULL_HANDLE) {
+            return;
+        }
+
         setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
     }
 
@@ -3176,6 +3208,10 @@ namespace plume {
     }
 
     void VulkanCommandList::begin() {
+        activeComputePipelineValid = true;
+        activeGraphicsPipelineValid = true;
+        activeRaytracingPipelineValid = true;
+
         vkResetCommandBuffer(vk, 0);
 
         VkCommandBufferBeginInfo beginInfo = {};
@@ -3202,6 +3238,9 @@ namespace plume {
         activeComputePipelineLayout = nullptr;
         activeGraphicsPipelineLayout = nullptr;
         activeRaytracingPipelineLayout = nullptr;
+        activeComputePipelineValid = true;
+        activeGraphicsPipelineValid = true;
+        activeRaytracingPipelineValid = true;
     }
 
     void VulkanCommandList::barriers(RenderBarrierStages stages, const RenderBufferBarrier *bufferBarriers, uint32_t bufferBarriersCount, const RenderTextureBarrier *textureBarriers, uint32_t textureBarriersCount) {
@@ -3271,6 +3310,10 @@ namespace plume {
     void VulkanCommandList::dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) {
         assert(activeComputePipelineLayout != nullptr);
 
+        if (!activeComputePipelineValid) {
+            return;
+        }
+
         vkCmdDispatch(vk, threadGroupCountX, threadGroupCountY, threadGroupCountZ);
     }
 
@@ -3279,6 +3322,10 @@ namespace plume {
         assert(interfaceBuffer != nullptr);
         assert((interfaceBuffer->desc.flags & RenderBufferFlag::SHADER_BINDING_TABLE) && "Buffer must allow being used as a shader binding table.");
         assert(activeRaytracingPipelineLayout != nullptr);
+
+        if (!activeRaytracingPipelineValid) {
+            return;
+        }
 
         VkBufferDeviceAddressInfo tableAddressInfo = {};
         tableAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
@@ -3310,6 +3357,10 @@ namespace plume {
 
     void VulkanCommandList::drawInstanced(uint32_t vertexCountPerInstance, uint32_t instanceCount, uint32_t startVertexLocation, uint32_t startInstanceLocation) {
         assert(activeGraphicsPipelineLayout != nullptr);
+        if (!activeGraphicsPipelineValid) {
+            return;
+        }
+
         checkActiveRenderPass();
 
         vkCmdDraw(vk, vertexCountPerInstance, instanceCount, startVertexLocation, startInstanceLocation);
@@ -3317,6 +3368,10 @@ namespace plume {
     
     void VulkanCommandList::drawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount, uint32_t startIndexLocation, int32_t baseVertexLocation, uint32_t startInstanceLocation) {
         assert(activeGraphicsPipelineLayout != nullptr);
+        if (!activeGraphicsPipelineValid) {
+            return;
+        }
+
         checkActiveRenderPass();
 
         vkCmdDrawIndexed(vk, indexCountPerInstance, instanceCount, startIndexLocation, baseVertexLocation, startInstanceLocation);
@@ -3329,16 +3384,34 @@ namespace plume {
         switch (interfacePipeline->type) {
         case VulkanPipeline::Type::Compute: {
             const VulkanComputePipeline *computePipeline = static_cast<const VulkanComputePipeline *>(interfacePipeline);
+            activeComputePipelineValid = computePipeline->vk != VK_NULL_HANDLE;
+            if (!activeComputePipelineValid) {
+                fprintf(stderr, "Skipping Vulkan compute pipeline bind because pipeline creation failed.\n");
+                break;
+            }
+
             vkCmdBindPipeline(vk, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline->vk);
             break;
         }
         case VulkanPipeline::Type::Graphics: {
             const VulkanGraphicsPipeline *graphicsPipeline = static_cast<const VulkanGraphicsPipeline *>(interfacePipeline);
+            activeGraphicsPipelineValid = graphicsPipeline->vk != VK_NULL_HANDLE;
+            if (!activeGraphicsPipelineValid) {
+                fprintf(stderr, "Skipping Vulkan graphics pipeline bind because pipeline creation failed.\n");
+                break;
+            }
+
             vkCmdBindPipeline(vk, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->vk);
             break;
         }
         case VulkanPipeline::Type::Raytracing: {
             const VulkanRaytracingPipeline *raytracingPipeline = static_cast<const VulkanRaytracingPipeline *>(interfacePipeline);
+            activeRaytracingPipelineValid = raytracingPipeline->vk != VK_NULL_HANDLE;
+            if (!activeRaytracingPipelineValid) {
+                fprintf(stderr, "Skipping Vulkan raytracing pipeline bind because pipeline creation failed.\n");
+                break;
+            }
+
             vkCmdBindPipeline(vk, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, raytracingPipeline->vk);
             break;
         }

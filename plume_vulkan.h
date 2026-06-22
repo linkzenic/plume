@@ -307,6 +307,9 @@ namespace plume {
         const VulkanPipelineLayout *activeComputePipelineLayout = nullptr;
         const VulkanPipelineLayout *activeGraphicsPipelineLayout = nullptr;
         const VulkanPipelineLayout *activeRaytracingPipelineLayout = nullptr;
+        bool activeComputePipelineValid = true;
+        bool activeGraphicsPipelineValid = true;
+        bool activeRaytracingPipelineValid = true;
         VkRenderPass activeRenderPass = VK_NULL_HANDLE;
 
         VulkanCommandList(VulkanCommandQueue *queue);
