@@ -97,6 +97,22 @@ namespace plume {
 #if defined(__ANDROID__) && defined(ZELDA_ANDROID_ADRENOTOOLS)
     static void *AndroidCustomVulkanHandle = nullptr;
 
+    void logAndroidVulkanDriver(android_LogPriority priority, const char *format, ...) {
+        va_list args;
+        va_start(args, format);
+
+        va_list logcatArgs;
+        va_copy(logcatArgs, args);
+        __android_log_vprint(priority, "ZeldaVulkanDriver", format, logcatArgs);
+        va_end(logcatArgs);
+
+        fprintf(stderr, "[ZeldaVulkanDriver] ");
+        vfprintf(stderr, format, args);
+        fprintf(stderr, "\n");
+
+        va_end(args);
+    }
+
     VkResult initializeVulkanLoader() {
         const char *customDriverDir = std::getenv("APP_CUSTOM_VULKAN_DRIVER_DIR");
         const char *customDriverName = std::getenv("APP_CUSTOM_VULKAN_DRIVER_NAME");
@@ -104,10 +120,17 @@ namespace plume {
         if (customDriverDir == nullptr || customDriverDir[0] == '\0' ||
             customDriverName == nullptr || customDriverName[0] == '\0' ||
             nativeLibraryDir == nullptr || nativeLibraryDir[0] == '\0') {
+            logAndroidVulkanDriver(ANDROID_LOG_INFO,
+                "Custom Vulkan driver inactive: dir=%s name=%s nativeLibDir=%s",
+                customDriverDir != nullptr ? customDriverDir : "<null>",
+                customDriverName != nullptr ? customDriverName : "<null>",
+                nativeLibraryDir != nullptr ? nativeLibraryDir : "<null>");
             return volkInitialize();
         }
 
-        __android_log_print(ANDROID_LOG_INFO, "ZeldaVulkanDriver", "Opening custom Vulkan driver %s%s", customDriverDir, customDriverName);
+        logAndroidVulkanDriver(ANDROID_LOG_INFO,
+            "Opening custom Vulkan driver dir=%s name=%s nativeLibDir=%s",
+            customDriverDir, customDriverName, nativeLibraryDir);
         AndroidCustomVulkanHandle = adrenotools_open_libvulkan(
             RTLD_NOW | RTLD_LOCAL,
             ADRENOTOOLS_DRIVER_CUSTOM,
@@ -119,19 +142,21 @@ namespace plume {
             nullptr);
 
         if (AndroidCustomVulkanHandle == nullptr) {
-            __android_log_print(ANDROID_LOG_WARN, "ZeldaVulkanDriver", "AdrenoTools failed to open custom Vulkan driver; falling back to system driver");
+            logAndroidVulkanDriver(ANDROID_LOG_WARN,
+                "AdrenoTools failed to open custom Vulkan driver; falling back to system driver");
             return volkInitialize();
         }
 
         auto getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(AndroidCustomVulkanHandle, "vkGetInstanceProcAddr"));
         if (getInstanceProcAddr == nullptr) {
-            __android_log_print(ANDROID_LOG_WARN, "ZeldaVulkanDriver", "Custom Vulkan driver has no vkGetInstanceProcAddr; falling back to system driver");
+            logAndroidVulkanDriver(ANDROID_LOG_WARN,
+                "Custom Vulkan driver has no vkGetInstanceProcAddr; falling back to system driver");
             AndroidCustomVulkanHandle = nullptr;
             return volkInitialize();
         }
 
         volkInitializeCustom(getInstanceProcAddr);
-        __android_log_print(ANDROID_LOG_INFO, "ZeldaVulkanDriver", "Custom Vulkan driver loaded");
+        logAndroidVulkanDriver(ANDROID_LOG_INFO, "Custom Vulkan driver loaded");
         return VK_SUCCESS;
     }
 #else
