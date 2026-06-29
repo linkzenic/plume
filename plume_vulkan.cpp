@@ -169,9 +169,6 @@ namespace plume {
 
     static const std::unordered_set<std::string> RequiredInstanceExtensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
-#   ifdef VULKAN_OBJECT_NAMES_ENABLED
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-#   endif
 #   if defined(_WIN64)
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
 #   elif defined(__ANDROID__)
@@ -186,6 +183,9 @@ namespace plume {
     };
 
     static const std::unordered_set<std::string> OptionalInstanceExtensions = {
+#   ifdef VULKAN_OBJECT_NAMES_ENABLED
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+#   endif
 #   if defined(__APPLE__)
         // Tells the system Vulkan loader to enumerate portability drivers, if supported.
         VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
@@ -4361,14 +4361,15 @@ namespace plume {
         // Check for supported features.
         void *featuresChain = nullptr;
         VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures = {};
-        const bool descriptorIndexingFound = supportedOptionalExtensions.find(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool descriptorIndexingFound = vulkan12Core || (supportedOptionalExtensions.find(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) != supportedOptionalExtensions.end());
         if (descriptorIndexingFound) {
             indexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+            indexingFeatures.pNext = featuresChain;
             featuresChain = &indexingFeatures;
         }
 
         VkPhysicalDeviceScalarBlockLayoutFeatures layoutFeatures = {};
-        const bool scalarBlockLayoutFound = supportedOptionalExtensions.find(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool scalarBlockLayoutFound = vulkan12Core || (supportedOptionalExtensions.find(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME) != supportedOptionalExtensions.end());
         if (scalarBlockLayoutFound) {
             layoutFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES;
             layoutFeatures.pNext = featuresChain;
@@ -4397,7 +4398,7 @@ namespace plume {
         }
 
         VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures = {};
-        const bool bufferDeviceAddressFound = supportedOptionalExtensions.find(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool bufferDeviceAddressFound = vulkan12Core || (supportedOptionalExtensions.find(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) != supportedOptionalExtensions.end());
         if (bufferDeviceAddressFound) {
             bufferDeviceAddressFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
             bufferDeviceAddressFeatures.pNext = featuresChain;
@@ -4604,12 +4605,23 @@ namespace plume {
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pNext = createDeviceChain;
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.queueCreateInfoCount = uint32_t(queueCreateInfos.size());
         createInfo.ppEnabledExtensionNames = enabledExtensions.data();
         createInfo.enabledExtensionCount = uint32_t(enabledExtensions.size());
+
+#   if defined(__ANDROID__)
+        // On Android, always use the pNext chain for features if possible to avoid issues with some drivers.
+        VkPhysicalDeviceFeatures2 enabledFeatures2 = {};
+        enabledFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        enabledFeatures2.features = deviceFeatures.features;
+        enabledFeatures2.pNext = createDeviceChain;
+        createInfo.pNext = &enabledFeatures2;
+        createInfo.pEnabledFeatures = nullptr;
+#   else
+        createInfo.pNext = createDeviceChain;
         createInfo.pEnabledFeatures = &deviceFeatures.features;
+#   endif
 
         VkResult res = vkCreateDevice(physicalDevice, &createInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
@@ -4693,7 +4705,8 @@ namespace plume {
         capabilities.descriptorIndexing = descriptorIndexingSupported;
         capabilities.scalarBlockLayout = scalarBlockLayoutSupported;
         capabilities.bufferDeviceAddress = bufferDeviceAddressSupported;
-        capabilities.samplerMirrorClampToEdge = supportedOptionalExtensions.find(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool vulkan13Core = (VK_VERSION_MAJOR(physicalDeviceProperties.apiVersion) > 1) || ((VK_VERSION_MAJOR(physicalDeviceProperties.apiVersion) == 1) && (VK_VERSION_MINOR(physicalDeviceProperties.apiVersion) >= 3));
+        capabilities.samplerMirrorClampToEdge = vulkan12Core || (supportedOptionalExtensions.find(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) != supportedOptionalExtensions.end());
         capabilities.presentWait = presentWaitSupported;
         capabilities.displayTiming = androidDisplayTimingSupported && !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end());
         capabilities.maxTextureSize = physicalDeviceProperties.limits.maxImageDimension2D;
@@ -4713,7 +4726,7 @@ namespace plume {
 #   endif
 
         // Fill Vulkan-only capabilities.
-        loadStoreOpNoneSupported = !androidConservativeVulkan && (supportedOptionalExtensions.find(VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME) != supportedOptionalExtensions.end());
+        loadStoreOpNoneSupported = !androidConservativeVulkan && (vulkan13Core || (supportedOptionalExtensions.find(VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME) != supportedOptionalExtensions.end()));
 
         if (!nullDescriptorSupported) {
             nullBuffer = createBuffer(RenderBufferDesc::DefaultBuffer(16, RenderBufferFlag::VERTEX));
